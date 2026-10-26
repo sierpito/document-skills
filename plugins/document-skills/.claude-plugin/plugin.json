@@ -1,0 +1,11 @@
+{
+  "name": "document-skills",
+  "version": "0.1.1",
+  "description": "Repair documents, review them for AI-generated content, generate diagrams, and run improvement loops on the skills themselves.",
+  "author": {
+    "name": "Igor"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/sierpito/document-skills",
+  "repository": "https://github.com/sierpito/document-skills"
+}

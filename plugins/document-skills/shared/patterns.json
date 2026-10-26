@@ -1,0 +1,457 @@
+{
+ "_note": "Shared by review-ai-content/scripts/scan_signs.py and repair-document/scripts/prose_tells.py. kind: residue|token|tool|glyph|format|style. weight is used by the edit scanner; the review scanner scores by kind. edge: first|last|either limits a rule to the first/last sentence of a paragraph (chat residue is only residue at the edges). where: notes limits a rule to speaker notes and comments.",
+ "rules": [
+  {
+   "id": "em-dash",
+   "label": "em dash",
+   "kind": "style",
+   "weight": 3,
+   "pattern": "\u2014|\u2013\u2013| \u2013 ",
+   "flags": "i",
+   "fix": "comma, period or parentheses",
+   "always": true,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "not-just-x-y",
+   "label": "not-just-X-but-Y frame",
+   "kind": "style",
+   "weight": 3,
+   "pattern": "\\b(it'?s|this is|that'?s) not (just|only|merely)\\b|\\bnot (just|only|merely) (a |an |the )?[^.!?]{1,60}?,? (but|it'?s|it is)\\b|\\bisn'?t (just|only)\\b",
+   "flags": "i",
+   "fix": "state the second half only",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "assistant-boilerplate",
+   "label": "chat residue",
+   "kind": "residue",
+   "weight": 3,
+   "pattern": "as an ai\\b|as a large language model|i cannot assist|i can'?t help with that|i'?m unable to (help|assist)|knowledge cutoff|i don'?t have (personal )?(opinions|feelings|access)",
+   "flags": "i",
+   "fix": "delete",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "sycophancy-opener",
+   "label": "sycophantic opener",
+   "kind": "residue",
+   "weight": 3,
+   "pattern": "\\bgreat question\\b|\\b(certainly|absolutely|of course)[!,.]|sure[,!] here|here'?s an? (summary|overview|breakdown|list|quick|brief|detailed|comprehensive|revised|updated)|i'?d be happy to|happy to help|you'?re absolutely right|what a (great|fascinating|wonderful)",
+   "flags": "i",
+   "fix": "delete the opener",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": "first",
+   "where": null
+  },
+  {
+   "id": "assistant-offer",
+   "label": "assistant offer",
+   "kind": "residue",
+   "weight": 3,
+   "pattern": "would you like me to|let me know if you(?:'d| would)? (?:like|want|need) me to|let me know if you'?d like|i hope this helps|feel free to (ask|reach)|is there anything else",
+   "flags": "i",
+   "fix": "delete",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": "last",
+   "where": null
+  },
+  {
+   "id": "tool-token",
+   "label": "tool/citation token",
+   "kind": "token",
+   "weight": 3,
+   "pattern": "oaicite|contentReference|turn\\d+search|utm_source=chatgpt|\\[cite:|<antArtifact|\\[insert [^\\]]*\\]|lorem ipsum",
+   "flags": "i",
+   "fix": "delete",
+   "always": false,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "ai-tool-name",
+   "label": "AI tool name mention",
+   "kind": "tool",
+   "weight": 1,
+   "pattern": "\\b(chatgpt|gpt-?[345]\\w*|openai|claude|anthropic|gemini|copilot|midjourney|dall-?e|stable diffusion)\\b",
+   "flags": "i",
+   "fix": "topic mentions are fine; a disclosure naming its tool is not a sign",
+   "always": false,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "bolded-lead-in",
+   "label": "bold lead-in label",
+   "kind": "format",
+   "weight": 3,
+   "pattern": "^\\s*(?:[-*]\\s+|\\d+\\.\\s+)?(\\*\\*[^*]+:\\*\\*|__[^_]+:__)",
+   "flags": "i",
+   "fix": "plain bullet or prose",
+   "always": false,
+   "uses": [
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "markdown-leakage",
+   "label": "markdown leakage",
+   "kind": "format",
+   "weight": 2,
+   "pattern": "(\\*\\*[^*\\n]+\\*\\*|^\\s{0,3}#{1,6}\\s+\\S|`[^`\\n]+`|^\\s*---+\\s*$)",
+   "flags": "i",
+   "fix": "use real formatting",
+   "always": false,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "zero-width",
+   "label": "zero-width character",
+   "kind": "glyph",
+   "weight": 2,
+   "pattern": "[\\u200b\\u200c\\u200d\\u2060\\ufeff]",
+   "flags": "i",
+   "fix": "remove (scripts/invisible_chars.py)",
+   "always": true,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "unusual-space",
+   "label": "unusual space",
+   "kind": "glyph",
+   "weight": 2,
+   "pattern": "[\\u202f\\u2009\\u200a\\u2007]",
+   "flags": "i",
+   "fix": "plain space",
+   "always": true,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "sparkle-glyph",
+   "label": "sparkle/emoji glyph",
+   "kind": "glyph",
+   "weight": 2,
+   "pattern": "[\\u2728\\u2705\\u274c\\U0001F680\\U0001F4A1\\U0001F525\\u2B50\\U0001F31F]",
+   "flags": "i",
+   "fix": "remove",
+   "always": false,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "emoji-decoration",
+   "label": "emoji decoration",
+   "kind": "format",
+   "weight": 2,
+   "pattern": "^\\s*(#+\\s*)?[\\u2728\\u2705\\U0001F680\\U0001F4A1\\U0001F525\\u2B50\\U0001F31F\\U0001F3AF]",
+   "flags": "i",
+   "fix": "remove",
+   "always": false,
+   "uses": [
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "arrow-punct",
+   "label": "arrow as punctuation",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "[\\u2192\\u21d2]",
+   "flags": "i",
+   "fix": "use words",
+   "always": false,
+   "uses": [
+    "review"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "ai-diction",
+   "label": "stock vocabulary",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "\\b(delve[sd]?|tapestry|testament|game-?changer|seamless(ly)?|leverag(e|es|ing)|unleash(es|ed)?|underscor(e|es|ed|ing)|embark(s|ed)?|meticulous(ly)?|elevate[sd]?|harness(es|ed|ing)?|showcas(e|es|ed|ing)|captivat\\w+|ever-(evolving|changing)|beacon|revolutioni[sz]e[sd]?)\\b",
+   "flags": "i",
+   "fix": "plain word",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "dive-in",
+   "label": "dive-in phrasing",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "\\bdeep dive\\b|\\bdiv(e|es|ing) (in|into|deep)\\b|let'?s dive",
+   "flags": "i",
+   "fix": "look at / cover",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "listicle-scaffold",
+   "label": "listicle scaffold",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "^\\s*(#+\\s*)?\\d+\\s+(ways|tips|signs|reasons|things|steps|tricks|secrets|lessons|mistakes|rules)\\b",
+   "flags": "i",
+   "fix": "name the point",
+   "always": false,
+   "uses": [
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "hollow-opener",
+   "label": "hollow opener",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "\\bin today'?s [\\w-]*\\s?(fast-paced|digital|modern|ever-\\w+|connected|competitive)?\\s?(world|age|landscape|era|society|market)\\b|\\bin (this|the) (fast-paced|digital|modern|ever-\\w+) (world|age|landscape|era|society|market)\\b",
+   "flags": "i",
+   "fix": "start with the subject",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "unlock-potential",
+   "label": "unlock-the-potential",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "\\b(unlock|unleash|harness|tap into)\\w* (the )?(power|potential|capabilities|secrets)\\b",
+   "flags": "i",
+   "fix": "say what it enables",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "in-conclusion",
+   "label": "recap opener",
+   "kind": "style",
+   "weight": 2,
+   "pattern": "\\b(in conclusion|in summary|to summari[sz]e|to conclude|to wrap up|in closing)\\b",
+   "flags": "i",
+   "fix": "cut the recap",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "transition-stack",
+   "label": "transition stack",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "(^|[.!?]\\s)(moreover|furthermore|additionally|consequently)\\b|\\b(firstly|secondly|thirdly|lastly)\\b",
+   "flags": "i",
+   "fix": "drop, or use 'and'/'but'",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "generic-diction",
+   "label": "generic diction",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\b(utili[sz]e|comprehensive|robust|facilitate|streamline|empower|myriad|plethora|paramount|pivotal|holistic|synergy|multi-?faceted|landscape|navigat(e|es|ing)|crucial)\\b",
+   "flags": "i",
+   "fix": "plain word",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "hype",
+   "label": "hype wording",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\b(revolutionary|transformative|supercharge|say goodbye to|look no further|buckle up|without further ado|to the next level)\\b",
+   "flags": "i",
+   "fix": "describe the fact",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "note-hedge",
+   "label": "note-hedge",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\bit(?:'?s| is) worth (noting|mentioning)\\b|\\bit(?:'?s| is) important to (note|remember|understand|recogni[sz]e)\\b|\\bthat being said\\b|\\bneedless to say\\b",
+   "flags": "i",
+   "fix": "delete",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "hedge-cliche",
+   "label": "hedge cliche",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\bit depends\\b|\\bno one-size-fits-all\\b|\\bno (single )?right answer\\b",
+   "flags": "i",
+   "fix": "commit, or say what it depends on",
+   "always": false,
+   "uses": [
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "hr-divider",
+   "label": "horizontal rule",
+   "kind": "format",
+   "weight": 1,
+   "pattern": "^\\s*([-*_])\\1{2,}\\s*$",
+   "flags": "i",
+   "fix": "remove",
+   "always": false,
+   "uses": [
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "notes-residue",
+   "label": "generator-facing note",
+   "kind": "residue",
+   "weight": 3,
+   "pattern": "user-provided|user-supplied|do not claim|do not invent|as instructed|per the prompt",
+   "flags": "i",
+   "fix": "rewrite for the presenter",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": "notes"
+  },
+  {
+   "id": "intensifier",
+   "label": "intensifier",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\b(incredibly|extremely|immensely|remarkably|profoundly|genuinely|absolutely|completely)\\s+[a-z]{3,}|\\ba (huge|massive|tremendous) (part|difference|impact|role|reason)\\b",
+   "flags": "i",
+   "fix": "drop the intensifier or give the fact",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  },
+  {
+   "id": "signposting",
+   "label": "signposting phrase",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\b(the (first|second|third|next|main) reason is|this is a big one|here'?s the thing|let'?s (break|unpack)|so to wrap up|to wrap up|i'?d love to hear|happy to take (any )?questions|at the end of the day)\\b",
+   "flags": "i",
+   "fix": "say the point directly",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
+  }
+ ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "document-skills",
+  "description": "Skills for repairing documents, reviewing them for AI-generated content, generating diagrams, and improving the skills themselves.",
+  "owner": {
+    "name": "Igor"
+  },
+  "plugins": [
+    {
+      "name": "document-skills",
+      "source": "./plugins/document-skills",
+      "description": "Repair documents, review them for AI-generated content, generate diagrams, and run improvement loops on the skills themselves.",
+      "version": "0.1.1",
+      "license": "Apache-2.0"
+    }
+  ]
+}
