@@ -21,6 +21,18 @@ A previewer that does not answer is a lead, not a verdict. Run Quick Look (`qlma
 timeout of 60-120 s. No thumbnail on a heavy deck (many freeform picture fills, SVG icons, several-MB images) means
 "investigate image size and count", not "pass" and not "proven defect": say which it was, with the time you waited.
 
+A full pass, per round, in this order:
+
+1. Repack to a new filename (never over the original).
+2. The Anthropic pptx skill's `validate.py out.pptx --original src.pptx` must say PASSED (Python 3.10+; read-only).
+3. Strict-parse every `.xml` / `.rels`, shape ids unique per slide, no animation target naming a deleted shape
+   (`ooxml_inspect.py` does all three).
+4. Byte-compare the binary parts you meant to leave alone (media, embedded fonts you kept): `full_repair.py` logs "Media changed".
+5. Convert and look: `slide_preview.py --all` (LibreOffice + pdftoppm) and view every changed slide; LibreOffice is a proxy for
+   PowerPoint, so say so.
+6. Re-grep the leftovers: the old fake family names, typed bullets, em dashes, citation labels (`Source:`), padding runs.
+7. File size sanity: dropping redundant embedded fonts took one deck from 715 KB to 239 KB; an unexpected jump either way is a lead.
+
 Two habits matter more than any single check:
 
 - **Re-render after every repair group**, because fixing the font changes what collides.

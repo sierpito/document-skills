@@ -12,7 +12,9 @@ Usage: ooxml_fix.py SRC [--out OUT] [flags] [--json]
                                  --bold adds bold to runs that used a fake "... Bold" family and lack it
   --normalize-fonts              every family named like 'X Bold'/'X Italic' becomes X with bold/italic set, and metric-compatible
                                  look-alikes (Arimo, Tinos, Carlito...) become the Office font; others are reported, not guessed
-  --strip-embedded-fonts         remove embedded font lists, their relationships, parts and content type
+  --strip-embedded-fonts         remove embedded fonts that are redundant (fake 'X Bold' families, look-alikes, fonts that ship with Office or
+                                 macOS); an embedded font that is not on a stock install is kept, it is how the deck keeps its look
+  --strip-all-embedded-fonts     remove every embedded font (the look falls back to what the viewer has)
   --bullets                      typed bullets (U+2022 and look-alikes) at paragraph start become real list formatting
   --props author=NAME[,date=today|YYYY-MM-DD]
                                  confirmed author into dc:creator / cp:lastModifiedBy; placeholder (2006, 2011) or
@@ -26,6 +28,8 @@ Usage: ooxml_fix.py SRC [--out OUT] [flags] [--json]
                                  along their hue to 4.6:1 (3.0:1 for large text); unknown backgrounds are left alone
   --fit                          pptx: boxes with no slack for their text (estimated from Arial metrics) are widened ~12% into free space,
                                  a single-line title that still cannot fit gets wrapping switched off, short boxes grow into free space below
+  --spaces                       pptx: runs of padding spaces (4+ leading or trailing, or space-only runs) used to fake alignment are removed;
+                                 text padded on both sides is centred instead
   --report-notes                 list speaker notes / comments that read as generator-facing (report only)
 Exit code: 0 ok, 2 refused (usage, unsafe archive, output exists).
 """
@@ -223,39 +227,73 @@ def normalize_fonts(pkg, rep):
                               "left (no safe answer, decide by hand)": ", ".join(sorted(left)[:6]) or "none"}
 
 
-def strip_embedded_fonts(pkg, rep):
-    lists = rels = parts = 0
-    for n in pkg.names(r"ppt/presentation\.xml"):
-        x = pkg.text(n)
-        x2, k = re.subn(r"<p:embeddedFontLst>.*?</p:embeddedFontLst>", "", x, flags=re.S)
-        if k:
-            lists += k
-            pkg.put(n, x2)
-    for n in pkg.names(r"word/fontTable\.xml"):
-        x = pkg.text(n)
-        x2, k = re.subn(r"<w:embed(?:Regular|Bold|Italic|BoldItalic)\b[^>]*/>", "", x)
-        if k:
-            lists += k
-            pkg.put(n, x2)
-    for n in pkg.names(r"(ppt|word)/_rels/(presentation|fontTable)\.xml\.rels"):
-        x = pkg.text(n)
-        base = n.split("/_rels/")[0]
-        for m in REL_FONT.finditer(x):
-            t = re.search(r'Target="([^"]+)"', m.group(0))
-            if t:
-                pkg.remove(f"{base}/{t.group(1)}".replace("//", "/"))
-                parts += 1
-        x2, k = REL_FONT.subn("", x)
-        if k:
-            rels += k
-            pkg.put(n, x2)
-    if lists or rels:
-        x = pkg.text("[Content_Types].xml")
-        x2 = re.sub(r'<Default\b[^>]*Extension="(?:fntdata|odttf)"[^>]*/>', "", x)
-        x2 = re.sub(r'<Override\b[^>]*PartName="/(?:ppt|word)/fonts/[^"]*"[^>]*/>', "", x2)
-        if x2 != x:
-            pkg.put("[Content_Types].xml", x2)
-    rep["strip-embedded-fonts"] = {"font lists/entries removed": lists, "relationships removed": rels, "font parts removed": parts}
+def strip_embedded_fonts(pkg, rep, everything=False):
+    """Remove embedded fonts that are redundant (a fake 'X Bold' family, a metric-compatible look-alike, a font that ships with
+    Office or macOS). An embedded font that is not on a stock install (Fredoka, ...) is how a deck keeps its look, so it is kept
+    unless `everything` is set."""
+    removed, kept, rels, parts = [], [], 0, 0
+    drop = {}  # rels file -> relationship ids to remove
+
+    def redundant(name):
+        return everything or fonts.target_for(name)[3] != "no-safe-answer"
+    if "ppt/presentation.xml" in pkg.parts:
+        x = pkg.text("ppt/presentation.xml")
+        for e in re.findall(r"<p:embeddedFont>.*?</p:embeddedFont>", x, re.S):
+            name = (re.search(r'typeface="([^"]*)"', e) or [None, ""])[1]
+            if redundant(name):
+                x = x.replace(e, "", 1)
+                drop.setdefault("ppt/_rels/presentation.xml.rels", set()).update(re.findall(r'r:id="(\w+)"', e))
+                removed.append(name)
+            else:
+                kept.append(name)
+        if "<p:embeddedFont>" not in x:
+            x = re.sub(r"<p:embeddedFontLst>\s*</p:embeddedFontLst>|<p:embeddedFontLst\s*/>", "", x)
+        pkg.put("ppt/presentation.xml", x)
+    if "word/fontTable.xml" in pkg.parts:
+        x = pkg.text("word/fontTable.xml")
+
+        def font(m):
+            blk = m.group(0)
+            if "<w:embed" not in blk:
+                return blk
+            name = re.search(r'w:name="([^"]*)"', blk).group(1)
+            if not redundant(name):
+                kept.append(name)
+                return blk
+            drop.setdefault("word/_rels/fontTable.xml.rels", set()).update(re.findall(r'r:id="(\w+)"', blk))
+            removed.append(name)
+            return re.sub(r"<w:embed(?:Regular|Bold|Italic|BoldItalic)\b[^>]*/>", "", blk)
+        pkg.put("word/fontTable.xml", re.sub(r"<w:font\b[^>]*>.*?</w:font>", font, x, flags=re.S))
+    for relfile, ids in drop.items():
+        if relfile not in pkg.parts:
+            continue
+        x = pkg.text(relfile)
+        base = relfile.split("/_rels/")[0]
+        for m in list(REL_FONT.finditer(x)):
+            rid = re.search(r'Id="(\w+)"', m.group(0))
+            tgt = re.search(r'Target="([^"]+)"', m.group(0))
+            if rid and rid.group(1) in ids:
+                x = x.replace(m.group(0), "", 1)
+                rels += 1
+                if tgt:
+                    pkg.remove(f"{base}/{tgt.group(1)}".replace("//", "/"))
+                    parts += 1
+        pkg.put(relfile, x)
+    if not kept:  # nothing is embedded any more: the "embed on save" flags and the content type have no job left
+        for n in pkg.names(r"ppt/presentation\.xml|word/settings\.xml"):
+            x = pkg.text(n)
+            x2, k = re.subn(r'\s(?:saveSubsetFonts|embedTrueTypeFonts)="[^"]*"|<w:(?:embedTrueTypeFonts|saveSubsetFonts)\b[^>]*/>', "", x)
+            if k:
+                pkg.put(n, x2)
+                removed.append("embed-on-save flags") if not removed else None
+        if removed:
+            x = pkg.text("[Content_Types].xml")
+            x2 = re.sub(r'<Default\b[^>]*Extension="(?:fntdata|odttf)"[^>]*/>', "", x)
+            x2 = re.sub(r'<Override\b[^>]*PartName="/(?:ppt|word)/fonts/[^"]*"[^>]*/>', "", x2)
+            if x2 != x:
+                pkg.put("[Content_Types].xml", x2)
+    rep["strip-embedded-fonts"] = {"embedded fonts removed": len([r for r in removed if r != "embed-on-save flags"]), "relationships removed": rels,
+                                   "font parts removed": parts, "kept (not on a stock install; embedding keeps their look)": ", ".join(sorted(set(kept))) or "none"}
 
 
 def _first_text(p, tag):
@@ -278,7 +316,7 @@ def bullets_pptx(pkg):
                 return p
             new_t = re.sub(r"^[ ]*[%s][  ]*" % BULLET_CHARS, "", t.group(1))
             p = p[:t.start(1)] + new_t + p[t.end(1):]
-            bu = '<a:buChar char="\u2022"/>'
+            bu = '<a:buFont typeface="Arial"/><a:buChar char="\u2022"/>'  # buFont before buChar: the glyph renders the same everywhere
             hang = ' marL="285750" indent="-285750"'
             selfclosed = re.search(r"<a:pPr\b([^>]*)/>", p)
             opened = re.search(r"<a:pPr\b([^>]*)>", p)
@@ -443,9 +481,16 @@ def images(pkg, rep, allow_clipped=False):
             converted += 1
             clipped += not _rect_path(sps[0])
             changed = True
+            gid = re.search(r'<p:nvGrpSpPr>\s*<p:cNvPr\b[^>]*\bid="(\d+)"', g)
+            cid = re.search(r'<p:cNvPr\b[^>]*\bid="(\d+)"', sps[0])
+            if gid and cid:
+                remap[gid.group(1)] = cid.group(1)
             return _pic_from(sps[0], off, ext, "")
 
+        remap = {}
         x2 = re.sub(r"<p:grpSp>(?:(?!<p:grpSp>).)*?</p:grpSp>", group, x, flags=re.S)
+        for gid, cid in remap.items():  # animations that targeted the group now target its picture
+            x2 = x2.replace(f'spid="{gid}"', f'spid="{cid}"')
 
         def lone(m):
             nonlocal converted, left, changed, clipped
@@ -480,6 +525,50 @@ def images(pkg, rep, allow_clipped=False):
         if changed:
             pkg.put(n, x3)
     rep["images"] = {"freeforms converted to p:pic": converted, "of which cut-outs with a non-rectangular outline": clipped, "freeforms left (not a plain rectangle, grouped with others, rotated group)": left}
+
+
+def spaces(pkg, rep):
+    """Remove padding spaces used to fake alignment. A paragraph padded on both sides becomes centred."""
+    pads = removed_runs = centred = 0
+    for n in pkg.names(r"ppt/(slides/slide|slideLayouts/slideLayout)\d+\.xml"):
+        x = pkg.text(n)
+
+        def para(m):
+            nonlocal pads, removed_runs, centred
+            p = m.group(0)
+            both = False
+
+            def run(rm):
+                nonlocal pads, removed_runs, both
+                r = rm.group(0)
+                tm = re.search(r"<a:t>(.*?)</a:t>", r, re.S)
+                if not tm:
+                    return r
+                text = tm.group(1)
+                if text and not text.strip(" \u00a0") and len(text) >= 4:
+                    removed_runs += 1
+                    return ""
+                lead, trail = len(text) - len(text.lstrip(" \u00a0")), len(text) - len(text.rstrip(" \u00a0"))
+                if lead >= 4 or trail >= 4:
+                    pads += 1
+                    both = both or (lead >= 4 and trail >= 4)
+                    new = text.strip(" \u00a0") if lead >= 4 and trail >= 4 else (text[lead:] if lead >= 4 else text.rstrip(" \u00a0"))
+                    return r.replace(tm.group(0), f"<a:t>{new}</a:t>", 1)
+                return r
+            p2 = re.sub(r"<a:r>.*?</a:r>", run, p, flags=re.S)
+            if both and 'algn="' not in p2.split("</a:pPr>")[0]:
+                if re.search(r"<a:pPr\b[^>]*/>", p2):
+                    p2 = re.sub(r"<a:pPr\b([^>]*?)\s*/>", r'<a:pPr\1 algn="ctr"/>', p2, count=1)
+                elif "<a:pPr" in p2:
+                    p2 = re.sub(r"<a:pPr\b", '<a:pPr algn="ctr"', p2, count=1)
+                else:
+                    p2 = re.sub(r"^(<a:p(?:\s[^>]*)?>)", r'\1<a:pPr algn="ctr"/>', p2, count=1)
+                centred += 1
+            return p2
+        x2 = re.sub(r"<a:p>.*?</a:p>|<a:p\s[^>]*>.*?</a:p>", para, x, flags=re.S)
+        if x2 != x:
+            pkg.put(n, x2)
+    rep["spaces"] = {"padded texts trimmed": pads, "space-only runs removed": removed_runs, "paragraphs centred instead": centred}
 
 
 def contrast(pkg, rep):
@@ -560,8 +649,9 @@ def props(pkg, spec, rep):
         x = pkg.text("docProps/app.xml")
         if pkg.kind == "pptx":
             counts = {"Slides": len(pkg.names(r"ppt/slides/slide\d+\.xml")), "Notes": len(pkg.names(r"ppt/notesSlides/notesSlide\d+\.xml"))}
-            counts["Words"] = len(unescape(" ".join(re.findall(r"<a:t>(.*?)</a:t>", " ".join(
-                pkg.text(n) for n in pkg.names(r"ppt/slides/slide\d+\.xml")), re.S))).split())
+            slide_xml = re.sub(r"<a:fld\b.*?</a:fld>", "", " ".join(pkg.text(n) for n in pkg.names(r"ppt/slides/slide\d+\.xml")), flags=re.S)
+            counts["Words"] = len(unescape(" ".join(re.findall(r"<a:t>(.*?)</a:t>", slide_xml, re.S))).split())
+            counts["Paragraphs"] = sum(1 for q in re.findall(r"<a:p>.*?</a:p>|<a:p\s[^>]*>.*?</a:p>", slide_xml, re.S) if re.search(r"<a:t>[^<]*\S", q))
         else:
             counts = {"Words": len(unescape(" ".join(re.findall(r"<w:t(?:\s[^>]*)?>(.*?)</w:t>", pkg.text("word/document.xml"), re.S))).split())}
         sld = re.search(r'<p:sldSz cx="(\d+)" cy="(\d+)"', pkg.get_text("ppt/presentation.xml")) if pkg.kind == "pptx" else None
@@ -580,8 +670,36 @@ def props(pkg, spec, rep):
                 if cur != str(v):
                     x = re.sub(r"<%s>\d*</%s>" % (tag, tag), "<%s>%d</%s>" % (tag, v, tag), x)
                     out[tag] = f"{cur or 'empty'} -> {v}"
+        if pkg.kind == "pptx":
+            x, listed = slide_titles_in_app(pkg, x)
+            if listed:
+                out["HeadingPairs/TitlesOfParts"] = listed
         pkg.put("docProps/app.xml", x)
     rep["props"] = out or {"changed": "nothing (no placeholder dates, counters already right, no author given)"}
+
+
+def slide_titles_in_app(pkg, x):
+    """Write the real slide titles (and fonts, theme) into app.xml's HeadingPairs/TitlesOfParts when they are missing."""
+    slides = sorted(pkg.names(r"ppt/slides/slide\d+\.xml"), key=lambda n: int(re.search(r"(\d+)\.xml", n).group(1)))
+    if not slides:
+        return x, ""
+    titles = [layout.slide_title(pkg.text(n), i) for i, n in enumerate(slides, 1)]
+    have = re.search(r"<TitlesOfParts>.*?</TitlesOfParts>", x, re.S)
+    if have and all(tt in have.group(0) for tt in titles):
+        return x, ""
+    fonts = sorted({f for n in slides for f in re.findall(r'<a:latin typeface="([^"+][^"]*)"', pkg.text(n))})
+    theme = re.search(r'<a:theme\b[^>]*\bname="([^"]*)"', pkg.get_text("ppt/theme/theme1.xml"))
+    parts = fonts + ([theme.group(1)] if theme else []) + titles
+    variant = lambda label, n: f"<vt:variant><vt:lpstr>{label}</vt:lpstr></vt:variant><vt:variant><vt:i4>{n}</vt:i4></vt:variant>"
+    pairs = (variant("Fonts Used", len(fonts)) if fonts else "") + (variant("Theme", 1) if theme else "") + variant("Slide Titles", len(titles))
+    count = (1 if fonts else 0) + (1 if theme else 0) + 1
+    block = (f'<HeadingPairs><vt:vector size="{count * 2}" baseType="variant">{pairs}</vt:vector></HeadingPairs>'
+             f'<TitlesOfParts><vt:vector size="{len(parts)}" baseType="lpstr">' + "".join(f"<vt:lpstr>{q}</vt:lpstr>" for q in parts) + "</vt:vector></TitlesOfParts>")
+    x = re.sub(r"<HeadingPairs>.*?</HeadingPairs>|<TitlesOfParts>.*?</TitlesOfParts>", "", x, flags=re.S)
+    x = x.replace("</Properties>", block + "</Properties>", 1)
+    if "xmlns:vt=" not in x.split(">", 2)[1] and "xmlns:vt=" not in x[:600]:
+        x = re.sub(r"<Properties\b", '<Properties xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"', x, count=1)
+    return x, f"{len(titles)} slide titles listed"
 
 
 def report_notes(pkg, rep):
@@ -616,8 +734,8 @@ def main():
         rename_font(pkg, a[i + 1], a[i + 2], "--bold" in a, rep)
     if "--normalize-fonts" in a:
         normalize_fonts(pkg, rep)
-    if "--strip-embedded-fonts" in a:
-        strip_embedded_fonts(pkg, rep)
+    if "--strip-embedded-fonts" in a or "--strip-all-embedded-fonts" in a:
+        strip_embedded_fonts(pkg, rep, everything="--strip-all-embedded-fonts" in a)
     if "--bullets" in a:
         n = bullets_pptx(pkg) if pkg.kind == "pptx" else bullets_docx(pkg)
         rep["bullets"] = {"typed bullets converted": n}
@@ -625,6 +743,10 @@ def main():
         if pkg.kind != "pptx":
             sys.exit("--images is for .pptx")
         images(pkg, rep, "--allow-clipped" in a)
+    if "--spaces" in a:
+        if pkg.kind != "pptx":
+            sys.exit("--spaces is for .pptx")
+        spaces(pkg, rep)
     if "--fit" in a:
         if pkg.kind != "pptx":
             sys.exit("--fit is for .pptx")

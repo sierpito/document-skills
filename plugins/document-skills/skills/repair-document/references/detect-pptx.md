@@ -25,8 +25,21 @@ need a render: `verification.md`. Report counts.
 | Image not shown by a previewer: `blipFill` outside `p:pic`, SVG/EMF/WebP/HEIC without a PNG or JPEG fallback, external (`TargetMode="External"`) or missing image target, zero-size extent, image off-canvas | rels + `p:pic` audit; render with a second tool                                         | Critical - invisible in Quick Look, Keynote, Google Slides                   |
 | Text that wraps or overflows its box: `wrap="square"` boxes whose render needs more lines than the source implies, `normAutofit` shrink, text past the box bottom, titles broken to a second line            | render and compare line counts and boxes                                                | High                                                                         |
 | Theme fonts (`a:majorFont`/`a:minorFont` latin, ea, cs) naming a family that differs from the runs or does not exist                                                                                         | `ppt/theme/theme1.xml` vs runs                                                          | High - the font declaration must agree everywhere                            |
+| Text padded with spaces to fake centring or indent (a run of 20+ leading spaces plus trailing spaces)                                                                                                        | `a:t` with 4+ leading or trailing spaces, or space-only runs                            | Medium - alignment depends on the font                                       |
+| Duplicate shape ids on a slide; animation targets (`spTgt spid`) naming a shape that no longer exists; XML parts that do not parse                                                                           | `ooxml_inspect.py` integrity rows                                                       | Critical/High - how an app decides a file needs repair                       |
+| `app.xml` lists no slide titles (`HeadingPairs`/`TitlesOfParts`), `Paragraphs`/`Words` at 0                                                                                                                  | `app.xml`                                                                               | Medium                                                                       |
+| Speaker notes written as a citation log: `Video:`, `Source:`, `Image source:`, `Audience:` labels on 3+ notes; one boilerplate sentence repeated                                                             | `scan_signs.py` (structural signals)                                                    | High - shows in presenter view                                               |
 | Zero `<p:ph>` layout placeholders; every shape absolutely positioned; typeface re-declared on every run; few distinct x-origins                                                                              | count                                                                                   | Structural - report only                                                     |
 
 The structural row differs from the rest. A deck made of absolutely-positioned boxes, with no layout
 placeholders and many distinct x-origins, was built by a program, and no repair changes that short of
 rebuilding the file from its content. Report it; do not pretend otherwise.
+
+## Do not flag
+
+- **Dynamic fields in speaker notes**: a date ("1.7.2013") and a slide number ("‹#›") are `<a:fld type="datetimeFigureOut">` /
+  `type="slidenum"` fields with stale cached text; PowerPoint recomputes them. They are not content and the scripts skip them.
+- **A transient glitch in a phone photo of a screen** (a cursor or highlight that looks like a corrupted glyph): ask for the app and
+  version, whether a repair dialog appears, and a fresh screenshot before treating it as corruption.
+- **An embedded font that is not on a stock install** (the deck keeps its look through it); only embedded fonts that are fake
+  "X Bold" families, look-alikes or already on every machine are defects.

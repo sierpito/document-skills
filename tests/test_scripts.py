@@ -220,7 +220,7 @@ def make_pptx(path):
              f'<a:p><a:pPr marL="0"><a:tabLst/></a:pPr>{run(B + " third point", 1800, "Arial")}</a:p>'
              '</p:txBody></p:sp></p:spTree></p:cSld></p:sld>')
     notes = f'<p:notes {NS}><a:p><a:r><a:t>Source: user-provided photo, do not claim a date</a:t></a:r></a:p></p:notes>'
-    pres = f'<p:presentation {NS}><p:embeddedFontLst><p:embeddedFont><p:font typeface="X"/></p:embeddedFont></p:embeddedFontLst></p:presentation>'
+    pres = f'<p:presentation {NS}><p:embeddedFontLst><p:embeddedFont><p:font typeface="Times New Roman Bold"/><p:regular r:id="rId9"/></p:embeddedFont></p:embeddedFontLst></p:presentation>'
     rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
             '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.fntdata"/>'
             '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>'
@@ -630,6 +630,191 @@ class SlidePreview(Fixtures):
         self.assertEqual(d.read_bytes(), before)
 
 
+class LessonsFromARealRepair(Fixtures):
+    """Findings from repairing an AI-generated deck in real PowerPoint: padding, ids, timing, titles, fields, labels."""
+    def signals(self, path):
+        return {r["signal"]: r for r in json.loads(run(INSPECT, path, "--json").stdout)["signals"]}
+
+    def test_padding_spaces_are_trimmed_and_centred_text_is_set_centred(self):
+        d = self.tmp / "pad.pptx"
+        spaced = lambda t, i: (f'<p:sp><p:nvSpPr><p:cNvPr id="{i}" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="{i * 900000}"/>'
+                               f'<a:ext cx="9000000" cy="500000"/></a:xfrm></p:spPr><p:txBody><a:p><a:r><a:t>{t}</a:t></a:r><a:r><a:t>      </a:t></a:r></a:p></p:txBody></p:sp>')
+        sized_deck(d, spaced(" " * 29 + "Centred by spaces" + " " * 11, 2) + spaced("Trailing only" + " " * 8, 3))
+        self.assertEqual(self.signals(d)["text padded with spaces to fake alignment"]["value"], 4)  # two padded texts and two space-only runs
+        out = self.tmp / "pad_out.pptx"
+        rep = json.loads(run(FIX, d, "--out", out, "--spaces", "--json").stdout)["fixes"]["spaces"]
+        self.assertEqual(rep["padded texts trimmed"], 2)
+        self.assertEqual(rep["space-only runs removed"], 2)
+        self.assertEqual(rep["paragraphs centred instead"], 1)
+        with zipfile.ZipFile(out) as z:
+            x = z.read("ppt/slides/slide1.xml").decode()
+        all_xml_parses(self, out)
+        self.assertIn("<a:t>Centred by spaces</a:t>", x)
+        self.assertIn("<a:t>Trailing only</a:t>", x)
+        self.assertEqual(x.count('algn="ctr"'), 1)
+        self.assertEqual(self.signals(out)["text padded with spaces to fake alignment"]["value"], 0)
+
+    def test_integrity_signals_duplicate_ids_orphan_animation_and_broken_xml(self):
+        d = self.tmp / "int.pptx"
+        body = text_box(2, 0, 0, 1000000, 500000, "A") + text_box(2, 0, 900000, 1000000, 500000, "B")
+        with zipfile.ZipFile(d, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("ppt/presentation.xml", f'<p:presentation {NS}><p:sldSz cx="9144000" cy="6858000"/></p:presentation>')
+            z.writestr("ppt/slides/slide1.xml", f"<p:sld {NS}><p:cSld><p:spTree>{body}</p:spTree></p:cSld>"
+                       '<p:timing><p:tnLst><p:par><p:cTn><p:childTnLst><p:set><p:cBhvr><p:tgtEl><p:spTgt spid="77"/></p:tgtEl></p:cBhvr></p:set>'
+                       "</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>")
+            z.writestr("ppt/slides/slide2.xml", "<p:sld><unclosed></p:sld>")
+        s = self.signals(d)
+        self.assertEqual(s["shape ids used twice on a slide"]["value"], 1)
+        self.assertEqual(s["animation targets pointing at shapes that do not exist"]["value"], 1)
+        self.assertEqual(s["XML parts that are not well-formed"]["value"], 1)
+        self.assertEqual(s["XML parts that are not well-formed"]["severity"], "critical")
+
+    def test_an_animation_that_targeted_a_group_follows_it_to_the_picture(self):
+        group = ('<p:grpSp><p:nvGrpSpPr><p:cNvPr id="9" name="Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>'
+                 '<a:xfrm rot="0"><a:off x="0" y="0"/><a:ext cx="4000000" cy="3000000"/><a:chOff x="0" y="0"/><a:chExt cx="4000000" cy="3000000"/></a:xfrm></p:grpSpPr>'
+                 + freeform(6, cx=4000000, cy=3000000) + "</p:grpSp>")
+        d = self.tmp / "tm.pptx"
+        with zipfile.ZipFile(d, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("ppt/presentation.xml", f"<p:presentation {NS}/>")
+            z.writestr("ppt/slides/slide1.xml", f'<p:sld {NS}>{group}<p:timing><p:spTgt spid="9"/></p:timing></p:sld>')
+        out = self.tmp / "tm_out.pptx"
+        self.assertEqual(run(FIX, d, "--out", out, "--images").returncode, 0)
+        with zipfile.ZipFile(out) as z:
+            x = z.read("ppt/slides/slide1.xml").decode()
+        self.assertIn('spid="6"', x)
+        self.assertNotIn('spid="9"', x)
+        self.assertEqual(self.signals(out)["animation targets pointing at shapes that do not exist"]["value"], 0)
+
+    def test_slide_titles_and_paragraph_counter_are_written_to_app_xml(self):
+        d = self.tmp / "ti.pptx"
+        big = text_box(2, 0, 0, 5000000, 800000, "The Real Title", sz=4000)
+        small = text_box(3, 0, 1500000, 5000000, 500000, "A subtitle", sz=1800)
+        with zipfile.ZipFile(d, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("ppt/presentation.xml", f'<p:presentation {NS}><p:sldSz cx="9144000" cy="6858000"/></p:presentation>')
+            z.writestr("ppt/slides/slide1.xml", f"<p:sld {NS}><p:cSld><p:spTree>{small}{big}</p:spTree></p:cSld></p:sld>")
+            z.writestr("docProps/app.xml", "<Properties><Slides>1</Slides><Paragraphs>0</Paragraphs><Words>0</Words></Properties>")
+        self.assertEqual(self.signals(d)["app.xml does not list the slide titles (HeadingPairs/TitlesOfParts)"]["value"], 1)
+        out = self.tmp / "ti_out.pptx"
+        self.assertEqual(run(FIX, d, "--out", out, "--props", "").returncode, 0)
+        with zipfile.ZipFile(out) as z:
+            app = z.read("docProps/app.xml").decode()
+        all_xml_parses(self, out)
+        self.assertIn("<vt:lpstr>The Real Title</vt:lpstr>", app)
+        self.assertIn("<vt:lpstr>Slide Titles</vt:lpstr>", app)
+        self.assertIn("xmlns:vt=", app)
+        self.assertIn("<Paragraphs>2</Paragraphs>", app)
+        self.assertEqual(self.signals(out)["app.xml does not list the slide titles (HeadingPairs/TitlesOfParts)"]["value"], 0)
+
+    def test_bullets_get_a_font_before_the_bullet_char(self):
+        d = self.tmp / "bu.pptx"
+        make_pptx(d)
+        out = self.tmp / "bu_out.pptx"
+        run(FIX, d, "--out", out, "--bullets")
+        with zipfile.ZipFile(out) as z:
+            x = z.read("ppt/slides/slide1.xml").decode()
+        self.assertEqual(x.count('<a:buFont typeface="Arial"/><a:buChar'), 3)
+
+    def test_date_and_slide_number_fields_are_not_content(self):
+        notes = ('<p:notes %s><a:p><a:fld id="{1}" type="datetimeFigureOut"><a:t>1.7.2013</a:t></a:fld></a:p>'
+                 '<a:p><a:fld id="{2}" type="slidenum"><a:t>\u2039#\u203a</a:t></a:fld></a:p>'
+                 '<a:p><a:r><a:t>A real note about the slide.</a:t></a:r></a:p></p:notes>') % NS
+        d = self.tmp / "fld.pptx"
+        with zipfile.ZipFile(d, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("ppt/presentation.xml", f"<p:presentation {NS}/>")
+            z.writestr("ppt/slides/slide1.xml", f"<p:sld {NS}><a:p><a:r><a:t>Slide text</a:t></a:r></a:p></p:sld>")
+            z.writestr("ppt/notesSlides/notesSlide1.xml", notes)
+        r = json.loads(run(SCAN, d, "--json").stdout)
+        self.assertEqual(r["by_part"]["notes"]["words"], 6)  # the field text "1.7.2013" and the slide-number glyph are not counted
+        led = json.loads(run(PACK, "ledger", d, d, "--json").stdout)
+        self.assertEqual(led["notes"]["input_words"], 6)
+
+    def test_citation_style_labels_in_notes_are_a_structural_sign(self):
+        labels = ["Video: https://example.test/a", "Source: https://example.test/b", "Image source: https://example.test/c", "Audience: people"]
+        notes = [[labels[i % 4], "A short sentence for the presenter number %d." % i] for i in range(1, 5)]
+        d = self.tmp / "lab.pptx"
+        deck(d, [["Slide"]] * 4, notes)
+        cats = json.loads(run(SCAN, d, "--json").stdout)["categories"]
+        self.assertEqual(cats["citation-style labels in speaker notes (3+ notes)"], 4)
+        two = self.tmp / "lab2.pptx"
+        deck(two, [["Slide"]] * 2, notes[:2])
+        self.assertNotIn("citation-style labels in speaker notes (3+ notes)", json.loads(run(SCAN, two, "--json").stdout)["categories"])
+
+    def test_rather_than_is_a_weak_sign_and_the_controls_stay_quiet(self):
+        out = run(SCAN, self.write("r.txt", "So regulars feel valued rather than processed.\n"), "--json").stdout
+        self.assertIn("'X rather than Y' contrast", json.loads(out)["categories"])
+
+    def test_fit_margin_is_at_least_half_an_inch(self):
+        d = self.tmp / "m.pptx"
+        tight_deck(d, [("Tesla", 1, 1, 2.0612, 1, 20, True, "l")])  # a short label: 12% would be only ~0.2 in
+        out = self.tmp / "m_out.pptx"
+        run(FIX, d, "--out", out, "--fit")
+        with zipfile.ZipFile(out) as z:
+            x = z.read("ppt/slides/slide1.xml").decode()
+        w = int(re.search(r'<a:ext cx="(\d+)"', x).group(1)) / 914400
+        sys.path.insert(0, str(TEXTM.parent))
+        import ooxml_text
+        need = ooxml_text.width_pt("Tesla", 20, True) / 72
+        self.assertGreaterEqual(w, need + 0.5 - 0.02)
+
+    def test_check_tools_finds_soffice_off_path_and_modern_python(self):
+        out = run(TOOLS).stdout
+        self.assertRegex(out, r"Python 3\.10\+")
+        self.assertIn("LibreOffice (soffice)", out)
+
+
+class EmbeddedFonts(Fixtures):
+    """An embedded font that is not on a stock install is how a deck keeps its look: redundant ones go, that one stays."""
+    def deck(self, *names):
+        d = self.tmp / "e.pptx"
+        entries = "".join(f'<p:embeddedFont><p:font typeface="{n}"/><p:regular r:id="rId{20 + i}"/></p:embeddedFont>' for i, n in enumerate(names))
+        rels = "".join(f'<Relationship Id="rId{20 + i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/f{i}.fntdata"/>'
+                       for i, _ in enumerate(names))
+        with zipfile.ZipFile(d, "w") as z:
+            z.writestr("[Content_Types].xml", CT % "fntdata")
+            z.writestr("ppt/presentation.xml", f'<p:presentation {NS} saveSubsetFonts="1" embedTrueTypeFonts="1"><p:embeddedFontLst>{entries}</p:embeddedFontLst></p:presentation>')
+            z.writestr("ppt/_rels/presentation.xml.rels", f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>')
+            for i, _ in enumerate(names):
+                z.writestr(f"ppt/fonts/f{i}.fntdata", b"x")
+        return d
+
+    def fix(self, d, flag):
+        out = self.tmp / "e_out.pptx"
+        rep = json.loads(run(FIX, d, "--out", out, flag, "--json").stdout)["fixes"]["strip-embedded-fonts"]
+        with zipfile.ZipFile(out) as z:
+            return rep, z.namelist(), z.read("ppt/presentation.xml").decode(), z.read("[Content_Types].xml").decode()
+
+    def test_redundant_removed_and_non_standard_kept(self):
+        rep, names, pres, ct = self.fix(self.deck("Arimo Bold", "Fredoka"), "--strip-embedded-fonts")
+        self.assertEqual(rep["embedded fonts removed"], 1)
+        self.assertEqual(rep["kept (not on a stock install; embedding keeps their look)"], "Fredoka")
+        self.assertNotIn("ppt/fonts/f0.fntdata", names)
+        self.assertIn("ppt/fonts/f1.fntdata", names)
+        self.assertIn("Fredoka", pres)
+        self.assertNotIn("Arimo", pres)
+        self.assertIn("saveSubsetFonts", pres)  # something is still embedded, the flags stay
+        self.assertIn("fntdata", ct)
+
+    def test_strip_all_and_flags_when_nothing_is_left(self):
+        rep, names, pres, ct = self.fix(self.deck("Arimo Bold", "Fredoka"), "--strip-all-embedded-fonts")
+        self.assertEqual(rep["embedded fonts removed"], 2)
+        self.assertFalse([n for n in names if n.startswith("ppt/fonts/")])
+        self.assertNotIn("embeddedFont", pres)
+        self.assertNotIn("saveSubsetFonts", pres)
+        self.assertNotIn("embedTrueTypeFonts", pres)
+        self.assertNotIn("fntdata", ct)
+
+    def test_inspect_separates_redundant_from_kept(self):
+        d = self.deck("Arimo Bold", "Fredoka")
+        rows = {r["signal"]: r for r in json.loads(run(INSPECT, d, "--json").stdout)["signals"]}
+        self.assertEqual(rows["embedded fonts that are redundant"]["value"], 1)
+        self.assertEqual(rows["embedded fonts that keep a non-standard font's look (kept)"]["value"], 1)
+        self.assertEqual(rows["embedded fonts that keep a non-standard font's look (kept)"]["severity"], "info")
+
+
 class Fonts(Fixtures):
     def setUp(self):
         super().setUp()
@@ -990,6 +1175,22 @@ class FullRepair(Fixtures):
         rows = {r["signal"]: r["value"] for r in json.loads(run(INSPECT, fixed["latest"], "--json").stdout)["signals"]}
         self.assertEqual(rows["app.xml counters disagree with the file (after an edit)"], 0)
 
+    def test_log_shows_size_and_media_and_a_hand_edit_that_adds_em_dashes_is_called_out(self):
+        src = self.tmp / "D.pptx"
+        make_pptx(src)
+        work, r = self.go(src, "--author", "A")
+        self.assertIn("Media changed", (work / "D-repair-log.md").read_text())
+        self.assertEqual(r["rounds"][-1]["media_changed"] if "media_changed" in r["rounds"][-1] else 0, 0)
+        edited = self.tmp / "em.pptx"
+        with zipfile.ZipFile(r["latest"]) as a, zipfile.ZipFile(edited, "w") as b:
+            for i in a.infolist():
+                data = a.read(i.filename)
+                if i.filename == "ppt/slides/slide1.xml":
+                    data = data.replace(b"first point", "first point \u2014 and more".encode())
+                b.writestr(i, data)
+        _, adopted = self.go(src, "--adopt", edited)
+        self.assertIn("em dashes added by the hand edit", json.dumps(adopted["manual"]))
+
     def test_docx_uses_only_the_docx_fixes(self):
         src = self.tmp / "d.docx"
         make_docx(src)
@@ -1142,7 +1343,7 @@ class Inspect(Fixtures):
         self.assertEqual(s["author (dc:creator)"], "empty")
         self.assertEqual(s["fractional type sizes: rounding noise (sz within 2 of a multiple of 100)"], 1)
         self.assertEqual(s["fractional type sizes: other (left alone)"], 1)
-        self.assertEqual(s["embedded fonts"], 1)
+        self.assertEqual(s["embedded fonts that are redundant"], 1)
         self.assertEqual(s["fabricated font families (name ends in Bold/Italic)"], 1)
         self.assertEqual(s["typed bullets (should be list formatting)"], 3)
         self.assertEqual(s["generator-facing speaker notes"], 1)

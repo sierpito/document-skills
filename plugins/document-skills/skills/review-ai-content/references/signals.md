@@ -37,7 +37,16 @@ check the rest by hand and add them as their own rows.
 - (script, docx/pptx) Placeholder dates (2006, 2011), empty author, `Words 0`, generator names in
   `app.xml`/`core.xml`, a single uniform `rsid` or none.
 
+## False positives, do not count
+
+- Date and slide-number fields in speaker notes ("1.7.2013", "‹#›"): dynamic fields with stale cached text; the scanner skips them.
+- A cursor or highlight in a phone photo of a screen that looks like a broken glyph: not evidence of anything in the file.
+- A figure from a third-party "AI score" tool: vibes; report the concrete fingerprints instead.
+
 ## Structural signals (script)
+
+- Speaker notes written as a citation log (`Video:`, `Source:`, `Image source:`, `Audience:`) on 3+ notes.
+- "X rather than Y" contrasts (weak) alongside "not just X, but Y"; em dashes (high in the edit scanner, weak in the review).
 
 - Same sentence in 3+ notes or paragraphs (boilerplate); same opening label on 4+ slides; 5+ notes of nearly equal
   length; three very short sentences in a row; intensifiers and signposting phrases (weak, from `patterns.json`).

@@ -76,6 +76,7 @@ def texts(path):
                 continue
             x = z.read(n).decode("utf8", "replace")
             for p in re.findall(para, x, re.S):
+                p = re.sub(r"<a:fld\b.*?</a:fld>", "", p, flags=re.S)  # dynamic fields are not content
                 t = unescape("".join(re.findall(run, p, re.S))).strip()
                 if t:
                     out[key].append(t)

@@ -85,6 +85,10 @@ the manual checks in `references/signals.md` still matter. Rules:
 
 ## Fairness
 
+Report concrete fingerprints (what, where, how many). Do not quote or chase third-party "AI smell scores": style-based detection is
+unreliable, and this skill's own figure is a floor from signals, not detector proof.
+
+
 Do not use the result to accuse a person; ask the author. Short texts, non-native writers and templated
 writing (reports, legal text, student essays) raise false positives, so say so when it applies. The rules
 are English only: for another language, report the signs but say the percentage is not estimated; when the

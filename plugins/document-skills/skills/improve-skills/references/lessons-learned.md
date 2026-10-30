@@ -45,3 +45,9 @@ did next. Read them before the first iteration; add to them through `lessons.py`
 - **Look at the result.** Counters at zero are not a finished repair: a deck whose boxes were exactly as wide as their text
   wrapped titles and broke words in a real viewer while every check said 0. Render, view, and treat a user's screenshot as a
   detector gap: measure why the tools missed it, extend them, add a test, then repair.
+- **Look where the platform keeps a tool before reporting it missing.** LibreOffice on a Mac is in `/Applications/LibreOffice.app/Contents/MacOS`,
+  off PATH; it turned a one-renderer review into a two-renderer one. `check_tools.py` now looks there.
+- **Keep what keeps the look.** An embedded font that is not on a stock install is how a deck stays itself; only redundant embedded fonts
+  (fake "X Bold" families, look-alikes, fonts every machine has) are defects.
+- **Learn from other people's repairs, but vet each rule against your own constraints.** A lesson that says to delete through a script
+  when the sandbox denies `rm` was left out: a denied delete is a permission decision.

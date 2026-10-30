@@ -354,7 +354,7 @@ def fit_fix(slide_xml, W, H):
         new_x, new_cx, new_cy, new_s = x, cx, cy, s
         left, right, bottom = _bounds(allitems, idx, W, H)
         if m["slack_pct"] < 3.0 or m["broke_inside_word"]:
-            want = int(m["need_pt"] * 12700 * 1.12) + lins + rins
+            want = int(max(m["need_pt"] * 12700 * 1.12, m["need_pt"] * 12700 + 457200)) + lins + rins  # +12%, at least +0.5 in
             algn = re.search(r'<a:pPr\b[^>]*\balgn="(\w+)"', s)
             a = algn.group(1) if algn else "l"
             grow = want - cx
@@ -390,3 +390,20 @@ def fit_fix(slide_xml, W, H):
     for (a, b), new in sorted(edits, reverse=True):
         slide_xml = slide_xml[:a] + new + slide_xml[b:]
     return slide_xml, counts
+
+
+def slide_title(slide_xml, number):
+    """The slide's title: the title placeholder if there is one, else the largest text near the top, else 'Slide N'."""
+    for s in re.findall(r"<p:sp>.*?</p:sp>", slide_xml, re.S):
+        if re.search(r'<p:ph\b[^>]*type="(title|ctrTitle)"', s) and shape_text(s):
+            return shape_text(s)[:200]
+    best = None
+    for s, rect, rot in top_level_shapes(slide_xml):
+        text = shape_text(s)
+        if not text or not rect:
+            continue
+        sz = re.search(r'\bsz="(\d+)"', s)
+        key = (-(int(sz.group(1)) if sz else 1800), rect[1])
+        if best is None or key < best[0]:
+            best = (key, text)
+    return (best[1][:200] if best else f"Slide {number}")

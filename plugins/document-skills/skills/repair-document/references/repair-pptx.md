@@ -26,7 +26,9 @@ flowchart TD
    Times New Roman, Helvetica Neue), never a made-up bold or "Variable" family. Before renaming a fabricated family, confirm every run using it already carries
    `b="1"` or `b="true"`; if so the rename preserves bold, if not add it. Then drop the bogus
    `<p:embeddedFontLst>`, its relationships, the `.fntdata` parts and the `fntdata` content-type
-   default. No embedding is usually right for a font that ships with Office.
+   default. No embedding is usually right for a font that ships with Office. An embedded font that is *not* on a stock
+   install (Fredoka) is how the deck keeps its look: `--strip-embedded-fonts` keeps it; `--strip-all-embedded-fonts` removes everything,
+   with the `saveSubsetFonts` / `embedTrueTypeFonts` flags, and the look then depends on the viewer.
 2. **Type sizes.** Round only rounding noise - values within 2 of a multiple of 100. Leave deliberate
    half-points (`sz="3150"` = 31.5pt) unless they contradict a sibling. Scale each paragraph's
    `<a:spcPts>` by the same ratio.
@@ -80,9 +82,28 @@ flowchart TD
    differs from the original. If you removed a part (a confirmed label removal), leave it out of the
    member list; if you added one, append it.
 
+## Content that changes the user's words (only with consent)
+
+- **Speaker notes written as a citation log** (`Video:`, `Source:`, `Image source:`, `Audience:`, the same "sources checked" sentence on
+  every slide): rewrite as short, natural prose a presenter would say. Keep every real link, folded in as "Video: URL (source: URL)",
+  vary the wording from slide to slide, drop the repeated boilerplate and the stamp. Show before and after.
+- **Em dashes:** replace by context (a period that splits the sentence, a colon, a comma, parentheses) and vary the choice. Never
+  introduce one in a rewrite.
+- **Template variation across repeated slides** changes the structure of their content. Offer it, do not assume it: keep both
+  headers with reworded text, drop both and merge into prose, drop one, swap their order, or add one sentence. Merging means deleting
+  shapes and rebuilding one body that spans the freed area; estimate wrapped lines (`ceil(text width / box width)` x line spacing) and
+  grow the box height when the text gets longer, then re-measure.
+- Typos ("Managment", "Public Relation") are content too: fix with a yes.
+
 ## XML editing rules
 
 Parse with `defusedxml.minidom`, or use regex on the raw string. Round-tripping OOXML through
 `xml.etree.ElementTree` rewrites namespace prefixes and corrupts the package. When splitting a
 paragraph, close `</a:t></a:r></a:p>` before opening `<a:p><a:r>`; a missing `</a:r>` is the easiest
 way to produce an unopenable file, and validation catches it at once.
+
+String surgery, as the scripts do it: exact-match replacements, an `assert old in content` before every one (a straight `'` where
+you typed a curly `’` is the classic miss), shapes located by `<p:cNvPr ... id="N"/>` and the nearest `<p:sp>` around it, ids kept
+unique per slide, animation targets (`<p:spTgt spid=...>`) re-pointed when a shape is replaced, children of `<p:presentation>`
+never reordered (removing an optional element such as `embeddedFontLst` is safe). Bullets need `lnSpc`, then `buFont`, then
+`buChar` in that order inside `<a:pPr>`.

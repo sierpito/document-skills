@@ -60,6 +60,12 @@ def inspect(pkg):
     def add(signal, value, note="", severity="info"):
         rows.append({"signal": signal, "value": value, "note": note, "severity": severity})
 
+    def emb_note(embedded):
+        redundant = [e for e in embedded if fonts.target_for(e)[3] != "no-safe-answer"]
+        keep = [e for e in embedded if fonts.target_for(e)[3] == "no-safe-answer"]
+        add("embedded fonts that are redundant", len(redundant), ", ".join(redundant[:4]) + (" -> ooxml_fix.py --strip-embedded-fonts" if redundant else ""), "high" if redundant else "info")
+        add("embedded fonts that keep a non-standard font's look (kept)", len(keep), ", ".join(keep[:4]))
+
     core, app = pkg.get("docProps/core.xml"), pkg.get("docProps/app.xml")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # --- properties
@@ -90,7 +96,8 @@ def inspect(pkg):
     if pkg.kind == "pptx":
         body = pkg.join(r"ppt/slides/slide\d+\.xml")
         notes = pkg.join(r"ppt/notesSlides/notesSlide\d+\.xml")
-        t_body, t_notes = text_nodes(body, "a:t"), text_nodes(notes, "a:t")
+        nofld = lambda s: re.sub(r"<a:fld\b.*?</a:fld>", "", s, flags=re.S)  # dynamic date / slide-number fields are not content
+        t_body, t_notes = text_nodes(nofld(body), "a:t"), text_nodes(nofld(notes), "a:t")
         runs_xml = body + pkg.join(r"ppt/slideLayouts/slideLayout\d+\.xml") + pkg.join(r"ppt/slideMasters/slideMaster\d+\.xml")
         faces = re.findall(r'<a:(?:latin|ea|cs) typeface="([^"]*)"', runs_xml)
         theme = pkg.get("ppt/theme/theme1.xml")
@@ -143,8 +150,8 @@ def inspect(pkg):
             wide, std = "wide" in fmt.group(1).lower() or "16:9" in fmt.group(1), "4:3" in fmt.group(1)
             mismatch = (wide and abs(ratio - 16 / 9) > 0.02) or (std and abs(ratio - 4 / 3) > 0.02)
             add("PresentationFormat contradicts sldSz", int(bool(mismatch)), f"{fmt.group(1)} vs {sld.group(1)}x{sld.group(2)}", "medium")
-        emb = len(re.findall(r"<p:embeddedFont>", pkg.get("ppt/presentation.xml")))
-        add("embedded fonts", emb, "ooxml_fix --strip-embedded-fonts", "high" if emb else "info")
+        embedded = [(re.search(r'typeface="([^"]*)"', e) or [None, ""])[1] for e in re.findall(r"<p:embeddedFont>.*?</p:embeddedFont>", pkg.get("ppt/presentation.xml"), re.S)]
+        emb_note(embedded)
         bu_real = len(re.findall(r"<a:bu(?:Char|AutoNum)\b", body))
         bu_typed = sum(1 for p in paragraphs(body, "a:p") if (text_nodes(p, "a:t") or [""])[0].lstrip().startswith(tuple(BULLETS)))
         note_label = "speaker notes"
@@ -173,8 +180,8 @@ def inspect(pkg):
         add("direct-format combinations used 5+ times", sum(1 for c in combos.values() if c >= 5), "candidates for a style")
         no_alt = len(re.findall(r"<wp:docPr\b(?![^>]*\bdescr=\"[^\"]+\")[^>]*>", doc))
         add("images without alt text", no_alt, "", "medium" if no_alt else "info")
-        emb = len(re.findall(r"<w:embed(?:Regular|Bold|Italic|BoldItalic)\b", pkg.get("word/fontTable.xml")))
-        add("embedded fonts", emb, "ooxml_fix --strip-embedded-fonts", "high" if emb else "info")
+        embedded = [re.search(r'w:name="([^"]*)"', b).group(1) for b in re.findall(r"<w:font\b[^>]*>.*?</w:font>", pkg.get("word/fontTable.xml"), re.S) if "<w:embed" in b]
+        emb_note(embedded)
         bu_real = len(re.findall(r"<w:numPr>", doc))
         bu_typed = sum(1 for p in paragraphs(doc, "w:p") if (text_nodes(p, "w:t") or [""])[0].lstrip().startswith(tuple(BULLETS)))
         note_label = "comments"
@@ -210,6 +217,36 @@ def inspect(pkg):
     residue = [r for r in patterns.load_rules("review") if r["kind"] in ("residue", "token")]
     flagged = [t for t in t_notes if any(r["rx"].search(t) for r in residue)]
     add(f"generator-facing {note_label}", len(flagged), (flagged[0][:70] if flagged else ""), "critical" if flagged else "info")
+    # --- package integrity and padding (the checks that rule out file-level corruption before blaming a viewer)
+    import xml.etree.ElementTree as ET
+    broken = []
+    for n in sorted(pkg.parts):
+        if n.endswith((".xml", ".rels")):
+            data = pkg.parts[n]
+            if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+                broken.append(n + " (DOCTYPE, not parsed)")
+                continue
+            try:
+                ET.fromstring(data)
+            except ET.ParseError:
+                broken.append(n)
+    add("XML parts that are not well-formed", len(broken), ", ".join(broken[:3]), "critical" if broken else "info")
+    if pkg.kind == "pptx":
+        dup, orphan, pads = [], [], 0
+        for n in pkg.match(r"ppt/slides/slide\d+\.xml"):
+            sx = pkg.get(n)
+            ids = re.findall(r'<p:cNvPr\b[^>]*\bid="(\d+)"', sx)
+            dup += [f"{n.split('/')[-1]}: id {i}" for i in sorted({i for i in ids if ids.count(i) > 1})]
+            orphan += [f"{n.split('/')[-1]}: spid {i}" for i in sorted(set(re.findall(r'<p:spTgt\b[^>]*spid="(\d+)"', sx)) - set(ids))]
+            for tx in re.findall(r"<a:t>(.*?)</a:t>", sx, re.S):
+                lead, trail = len(tx) - len(tx.lstrip(" \u00a0")), len(tx) - len(tx.rstrip(" \u00a0"))
+                pads += (lead >= 4 or trail >= 4)
+        add("shape ids used twice on a slide", len(dup), "; ".join(dup[:3]), "high" if dup else "info")
+        add("animation targets pointing at shapes that do not exist", len(orphan), "; ".join(orphan[:3]), "high" if orphan else "info")
+        add("text padded with spaces to fake alignment", pads, "ooxml_fix.py --spaces" if pads else "", "medium" if pads else "info")
+        slides_n = len(pkg.match(r"ppt/slides/slide\d+\.xml"))
+        listed = len(re.findall(r"<vt:lpstr>", (re.search(r"<TitlesOfParts>.*?</TitlesOfParts>", app, re.S) or [""])[0]))
+        add("app.xml does not list the slide titles (HeadingPairs/TitlesOfParts)", int(listed < slides_n), "ooxml_fix.py --props \"\"" if listed < slides_n else "", "medium" if listed < slides_n else "info")
     # --- relationships
     ext = missing = 0
     for n in pkg.match(r".*\.rels"):

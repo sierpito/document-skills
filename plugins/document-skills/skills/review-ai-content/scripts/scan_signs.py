@@ -51,6 +51,7 @@ def units_from_ooxml(z, pattern, para, run, skip_styles=()):
         for k, p in enumerate(re.findall(para, x, re.S), 1):
             if skip_styles and re.search(r'<w:pStyle w:val="(%s)"' % "|".join(skip_styles), p):
                 continue  # block quotes are someone else's wording
+            p = re.sub(r"<a:fld\b.*?</a:fld>", "", p, flags=re.S)  # date and slide-number fields hold stale cached text ("1.7.2013", "‹#›")
             t = strip_xml("".join(re.findall(run, p, re.S)))
             if t.strip():
                 out.append((f"{name} ¶{k}", t.strip()))
@@ -209,6 +210,11 @@ def structure_signals(scored, cats, locs, is_pptx):
         if len(notes) >= 5 and statistics.mean(notes) and statistics.pstdev(notes) / statistics.mean(notes) < 0.15:
             cats["uniform note length (spread under 15%)"] = 1
             locs["uniform note length (spread under 15%)"] = [f"{len(notes)} notes, mean {statistics.mean(notes):.0f} words, spread {100 * statistics.pstdev(notes) / statistics.mean(notes):.0f}%"]
+    label_files = {u[0].split(" ¶")[0] for u in scored if part_of(u[0]) == "notes"
+                   and re.match(r"^(Video|Sources?|Image source|Audience|Sources checked)\s*:", u[1], re.I)}
+    if len(label_files) >= 3:  # notes written as a citation log, not for a presenter
+        cats["citation-style labels in speaker notes (3+ notes)"] = len(label_files)
+        locs["citation-style labels in speaker notes (3+ notes)"] = sorted(label_files)[:2]
     runs = 0
     first = None
     for u in scored:

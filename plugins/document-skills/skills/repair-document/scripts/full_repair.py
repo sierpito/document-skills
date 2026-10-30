@@ -69,6 +69,7 @@ LEFT_BY_FIX = {
     "--normalize-fonts": "some families have no safe replacement",
     "--strip-embedded-fonts": "embedded fonts could not be removed",
     "--images": "freeforms with a non-rectangular path are clipped pictures; converting them could change the look, so they are left (opt in with --allow-clipped for cut-outs: PNGs with transparency and straight-line outlines)",
+    "--spaces": "these runs could not be trimmed safely",
     "--fit": "there is no free room next to or below these boxes; move or resize them by hand after checking a render",
     "--contrast": "the failing colours come from the theme or have no solution; pick colours by hand",
     "--bullets": "these bullets could not be converted safely",
@@ -90,12 +91,18 @@ def plan(defects, kind, author, allow_clipped=False):
                 manual.append((d, "choose an installed font for: " + note.split("no safe automatic answer:")[-1].strip()))
         elif s.startswith("font families that do not ship"):
             manual.append((d, "no safe automatic answer; pick an installed font or accept the viewer's fallback: " + note.split(":")[-1].strip()))
-        elif s == "embedded fonts":
+        elif s == "embedded fonts that are redundant":
             flags.append("--strip-embedded-fonts")
         elif s.startswith("images as picture fill on a custom shape"):
             flags.append("--images")
             if allow_clipped:
                 flags.append("--allow-clipped")
+        elif s.startswith("text padded with spaces"):
+            flags.append("--spaces")
+        elif s.startswith("app.xml does not list the slide titles"):
+            props = True
+        elif s.startswith(("XML parts that are not well-formed", "shape ids used twice", "animation targets pointing")):
+            manual.append((d, "file-level damage: do not guess; compare with the original and repair by hand before anything else"))
         elif s.startswith(("text boxes with no slack", "text boxes shorter than their text")):
             flags.append("--fit")
         elif s.startswith("text runs failing contrast"):
@@ -144,6 +151,26 @@ def latest(log, original):
     return Path(log["rounds"][-1]["file"]) if log["rounds"] else original
 
 
+def media_changed(original, path):
+    """Binary parts (media, fonts kept) of `path` that differ from the original's, by hash; removed font parts do not count."""
+    import hashlib, zipfile
+    def hashes(p):
+        with zipfile.ZipFile(p) as z:
+            return {n: hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist() if re.match(r"(ppt|word)/media/", n) and not n.endswith("/")}
+    try:
+        a, b = hashes(original), hashes(path)
+    except (OSError, zipfile.BadZipFile):
+        return -1
+    return sum(1 for n in a if n not in b or a[n] != b[n])
+
+
+def em_dashes(path):
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        return sum(z.read(n).decode("utf8", "replace").count("\u2014") for n in z.namelist()
+                   if re.fullmatch(r"ppt/(slides/slide|notesSlides/notesSlide)\d+\.xml|word/document\.xml", n))
+
+
 def evaluate(path):
     defects = inspect(path)
     return defects, review(path)
@@ -157,9 +184,10 @@ def open_summary(r):
 
 
 def table(log):
-    rows = [["Version", "Open defects", "Remaining", "Open signals (count)", "Fixes applied", "AI signs", "AI-looking % (info only)", "Residue signs"]]
+    rows = [["Version", "Size", "Media changed", "Open defects", "Remaining", "Open signals (count)", "Fixes applied", "AI signs", "AI-looking % (info only)", "Residue signs"]]
     for r in log["rounds"]:
-        rows.append([Path(r["file"]).name, f'{r["defect_score"]} ({r["defects"]} signals)', f'{r["remaining_pct"]}%',
+        rows.append([Path(r["file"]).name, f'{r["kb"]} KB' if "kb" in r else "-", str(r["media_changed"]) if "media_changed" in r else "-",
+                     f'{r["defect_score"]} ({r["defects"]} signals)', f'{r["remaining_pct"]}%',
                      open_summary(r), r["applied"].strip() or "-", str(r["ai_signs"]), f'~{r["ai_pct"]}% (range {r["range"][0]}-{r["range"][1]}%)'
                      if r["ai_pct"] is not None else "not estimated", str(r["residue"])])
     return "\n".join(mdtable.format_table(rows))
@@ -218,6 +246,9 @@ def main():
                               "remaining_pct": round(100 * sc / base) if base else 0, "applied": applied,
                               "ai_signs": rev["signs"], "ai_pct": rev["ai_pct"], "range": rev["range"], "residue": rev["residue"]})
         log["rounds"][-1]["open"] = [[d["signal"], d["value"]] for d in defects]
+        log["rounds"][-1]["kb"] = round(Path(path).stat().st_size / 1024)
+        log["rounds"][-1]["media_changed"] = media_changed(src, path)
+        log["rounds"][-1]["em_dashes"] = em_dashes(path)
         return defects
 
     def next_path():
@@ -230,8 +261,13 @@ def main():
             die("--adopt needs an existing file of the same type")
         dest = next_path()
         shutil.copyfile(edited, dest)
+        before = next((r.get("em_dashes") for r in reversed(log["rounds"]) if "em_dashes" in r), None)
         defects = record(dest, "hand edit")
         _, manual, _ = plan(defects, kind, author or log.get("author"), clipped)
+        now = log["rounds"][-1]["em_dashes"]
+        if before is not None and now > before:
+            manual.append(({"severity": "medium", "signal": "em dashes added by the hand edit"},
+                           f"the edit added {now - before} em dash(es); rewrites must not introduce them (use a period, colon, comma or parentheses)"))
         why = "hand edit adopted"
     else:
         rounds_run = 0

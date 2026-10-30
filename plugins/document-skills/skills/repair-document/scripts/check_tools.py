@@ -13,6 +13,7 @@ try:
 except ModuleNotFoundError:
     sys.exit("needs shared/mdtable.py from the document-skills plugin root; run this script from the installed plugin")
 
+MAC_SOFFICE = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
 PY = [
     ("pptx", "python-pptx", "read and edit slides, measure boxes, text frames"),
     ("lxml", "lxml", "XML edits and validation"),
@@ -43,7 +44,16 @@ def main():
     for mod, name, why in PY:
         rows.append({"kind": "python", "name": name, "found": importlib.util.find_spec(mod) is not None, "unlocks": why})
     for exe, name, why in BIN:
-        rows.append({"kind": "binary", "name": f"{name} ({exe})", "found": shutil.which(exe) is not None, "unlocks": why})
+        found = shutil.which(exe) is not None
+        if exe == "soffice" and not found and Path(MAC_SOFFICE).is_file():
+            rows.append({"kind": "binary", "name": f"{name} ({exe})", "found": True,
+                         "unlocks": why + " - installed but not on PATH: export PATH=\"$PATH:/Applications/LibreOffice.app/Contents/MacOS\""})
+            continue
+        rows.append({"kind": "binary", "name": f"{name} ({exe})", "found": found, "unlocks": why})
+    modern = [v for v in ("python3.13", "python3.12", "python3.11", "python3.10") if shutil.which(v)]
+    rows.append({"kind": "python", "name": "Python 3.10+ (" + (modern[0] if modern else "sys " + "%d.%d" % sys.version_info[:2]) + ")",
+                 "found": bool(modern) or sys.version_info >= (3, 10),
+                 "unlocks": "the Anthropic pptx skill's thumbnail.py, soffice.py and validate.py need 3.10+; otherwise make a venv: python3.13 -m venv venv"})
     if "--json" in sys.argv:
         print(json.dumps(rows, indent=2))
         return

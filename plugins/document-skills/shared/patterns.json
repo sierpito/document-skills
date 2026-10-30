@@ -452,6 +452,22 @@
    ],
    "edge": null,
    "where": null
+  },
+  {
+   "id": "rather-than",
+   "label": "'X rather than Y' contrast",
+   "kind": "style",
+   "weight": 1,
+   "pattern": "\\b\\w+ rather than \\w+",
+   "flags": "i",
+   "fix": "say what it is; drop the contrast",
+   "always": false,
+   "uses": [
+    "review",
+    "edit"
+   ],
+   "edge": null,
+   "where": null
   }
  ]
 }

@@ -46,7 +46,8 @@ R="${CLAUDE_PLUGIN_ROOT}/skills/repair-document/scripts"
 python3 -I "$R/check_tools.py"                        # which tools exist (installs nothing)
 python3 -I "$R/full_repair.py" FILE --workdir DIR [--target 10] [--author NAME]   # full mode: D.pptx -> D-v1.pptx, D-v2.pptx, ... + log
 python3 -I "$R/full_repair.py" FILE --workdir DIR --adopt EDITED_FILE             # register a hand edit as the next version
-python3 -I "$R/slide_preview.py" FILE.pptx --slide N --out DIR                # render one slide to a PNG (macOS Quick Look) and LOOK at it
+python3 -I "$R/slide_preview.py" FILE.pptx --slide N --out DIR                # render one slide to a PNG (LibreOffice if installed, else Quick Look) and LOOK at it
+python3 -I "$R/slide_preview.py" FILE.pptx --all --out DIR --renderer soffice       # every slide, LibreOffice + pdftoppm
 python3 -I "$R/ooxml_inspect.py" FILE                 # detect pass for .pptx/.docx: every signal with a count (read-only)
 python3 -I "$R/invisible_chars.py" FILE               # inspect invisible characters (read-only)
 python3 -I "$R/invisible_chars.py" FILE --clean --out WORKDIR/out/NAME   # cleaned copy, never overwrites
@@ -54,7 +55,9 @@ python3 -I "$R/invisible_chars.py" FILE --clean --out WORKDIR/out/NAME   # clean
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --round-sizes                       # pptx: 24.99pt -> 25pt
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --rename-font "Times New Roman Bold" "Times New Roman" --bold
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --normalize-fonts                    # "X Bold" -> X + bold; Arimo/Tinos/Carlito -> Arial/Times New Roman/Calibri
-python3 -I "$R/ooxml_fix.py" FILE --out OUT --strip-embedded-fonts
+python3 -I "$R/ooxml_fix.py" FILE --out OUT --strip-embedded-fonts                  # redundant embedded fonts only; a non-standard font stays embedded
+python3 -I "$R/ooxml_fix.py" FILE --out OUT --strip-all-embedded-fonts              # every embedded font (the look falls back to what the viewer has)
+python3 -I "$R/ooxml_fix.py" FILE --out OUT --spaces                               # pptx: padding spaces used to fake alignment removed (both sides: centred)
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --images                            # pptx: picture-filled rectangle freeforms -> p:pic
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --fit                               # pptx: boxes with no slack for their text widened (estimate; look at the slide)
 python3 -I "$R/ooxml_fix.py" FILE --out OUT --contrast                          # pptx: failing text colours -> 4.6:1 (known backgrounds only)
@@ -126,6 +129,12 @@ contains `..` (zip slip).
 
 ## Tools - check, do not install
 
+macOS quirks that look like "tool missing": LibreOffice is often installed but not on PATH (`check_tools.py` and `slide_preview.py`
+find `/Applications/LibreOffice.app/Contents/MacOS/soffice`; to call it yourself, add that folder to PATH), and the Anthropic pptx
+skill's own scripts (`thumbnail.py`, `soffice.py`, `validate.py`) need Python 3.10+ while the system `python3` may be 3.9: use a
+venv from `python3.13`. This skill's bundled scripts need only 3.8+. A blocked `rm` is a permission decision, not an obstacle:
+nothing here needs a delete (versions are new files, repacking writes a new archive), so do not route around it.
+
 Run `scripts/check_tools.py`. It lists Python modules and binaries (python-pptx, lxml, Pillow,
 defusedxml, LibreOffice, poppler, optional qpdf and exiftool) and what each unlocks. If one is missing,
 say which checks you cannot run and ask before installing anything. Run `soffice` headless only
@@ -158,9 +167,26 @@ If it is not found, fall back to the package audit in `references/verification.m
   repaired without rebuilding the file. Report them; rebuilding is a separate job the user must ask
   for.
 
+## Working with the user
+
+- **Check their numbers before acting.** "Six slides use this pattern" may be five: say so and proceed on the real five.
+- **Report concrete fingerprints, not smell scores.** Structural and metadata findings are facts; third-party "AI scores" and
+  style-based text detection are unreliable. Still fix the legitimately formulaic patterns they ask about.
+- **Layout and metadata fixes can go ahead; rewriting their words cannot.** On-slide text, speaker notes and template variation
+  across repeated slides change their content: ask first, show before and after.
+- **When someone reports corruption in another app**, rule out file-level causes first (`ooxml_inspect.py`: well-formed XML,
+  unique shape ids, animation targets, relationships, untouched media and fonts byte for byte), then fix the likely real cause
+  (a font that is not on the viewer's machine) and ask them to reopen a fresh copy. For a phone photo of a screen, ask for the
+  app and version, whether a repair dialog appears, and a fresh screenshot before assuming corruption: a text cursor or a
+  highlight can look like a broken glyph.
+- **Re-measure after any content change.** Swapping the text of two slots, or lengthening a sentence, can make a label wrap or a
+  body outgrow its box: run `ooxml_inspect.py` (or `--adopt` through `full_repair.py`) again and look.
+- **Never introduce em dashes in your own rewrites** (a period, colon, comma or parentheses); a hand edit that adds some is
+  called out by `full_repair.py`.
+
 ## Look at the slides
 
-Static checks are estimates and a deck can look broken to a person while every counter says 0. Before calling a .pptx repaired,
+LibreOffice and Quick Look are proxies for PowerPoint: name the renderer, and do not claim it is PowerPoint. Static checks are estimates and a deck can look broken to a person while every counter says 0. Before calling a .pptx repaired,
 render the slides with `slide_preview.py` and **view the PNGs** (the Read tool shows images): the titles, the brand names, any
 slide that had picture fills or overlap findings, at least one slide per layout. Compare with the original's render. If you
 can see wrapped titles, broken words, overlapping text, missing pictures or wrong fonts, it is not finished: fix, make the next
