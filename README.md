@@ -52,7 +52,7 @@ input was refused or bad (missing file, not a zip, unsafe or oversized archive),
 structure check. Input mistakes print one line, never a traceback.
 
 Bump the version in `.claude-plugin/marketplace.json` and `plugins/document-skills/.claude-plugin/plugin.json`
-together; `make validate` fails if they differ.
+together; `make validate` fails if they differ. Record every change in `CHANGELOG.md` under **Unreleased** and rename that heading to the version when you release.
 
 ## License
 

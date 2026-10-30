@@ -98,6 +98,12 @@ def main():
                 bad(f"plugin name differs: marketplace {plug['name']} vs plugin.json {pj.get('name')}")
             if pj.get("version") != plug.get("version"):
                 bad(f"version differs: marketplace {plug.get('version')} vs plugin.json {pj.get('version')}")
+        cl = ROOT / "CHANGELOG.md"
+        ctext = cl.read_text(encoding="utf8") if cl.is_file() else ""
+        if not cl.is_file():
+            bad("CHANGELOG.md is missing")
+        elif "## Unreleased" not in ctext or f"## {pj.get('version') if pj else ''}" not in ctext:
+            bad("CHANGELOG.md needs a '## Unreleased' section and a '## <current version>' section")
         tests = (ROOT / "tests/test_scripts.py")
         tested = tests.read_text(encoding="utf8") if tests.is_file() else ""
         for script in sorted((pdir / "skills").glob("*/scripts/*.py")):
